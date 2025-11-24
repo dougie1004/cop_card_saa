@@ -1,0 +1,4 @@
+pandas
+numpy
+psycopg2-binary  # PostgreSQL 연결용
+scikit-learn     # ML 기반 이상 탐지 모델 사용 시
