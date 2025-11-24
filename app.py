@@ -5,7 +5,7 @@ import numpy as np # pandas 내부 오류 방지를 위해 numpy 임포트
 
 # --- 1. 데이터 로딩 및 규칙 정의 ---
 
-def load_data(file_path='transactions.csv'):
+def load_data(file_path='/transactions.csv'):
     """
     예시 CSV 파일을 Pandas DataFrame으로 로드.
     FileNotFoundError 발생 시 Streamlit에서 경고 표시.
@@ -185,3 +185,4 @@ if __name__ == '__main__':
         else:
 
             st.success("🎉 탐지된 의심 활동(SAA)이 없습니다. 모든 거래는 정상입니다.")
+
