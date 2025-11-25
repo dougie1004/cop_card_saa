@@ -1,28 +1,45 @@
 import pandas as pd
 from datetime import time
 import streamlit as st
-import numpy as np # pandas 내부 오류 방지를 위해 numpy 임포트
+import numpy as np 
 
-# --- 1. 데이터 로딩 및 규칙 정의 ---
+# --- 1. 데이터 로딩 및 규칙 정의 (수정된 load_data 함수 포함) ---
 
-def load_data(file_path='/transactions.csv'):
+def load_data(file_path='data/transactions.csv'):
     """
-    예시 CSV 파일을 Pandas DataFrame으로 로드.
-    FileNotFoundError 발생 시 Streamlit에서 경고 표시.
+    [최종 수정] CSV 파일을 로드하고 헤더의 공백/인코딩 문제를 해결하기 위해
+    컬럼 이름을 표준화하고 날짜 파싱을 수동으로 진행합니다.
     """
     try:
-        # 'data/' 폴더는 Streamlit 실행 경로와 같다고 가정
-        df = pd.read_csv(file_path, parse_dates=['transaction_dt'])
-        return df
-    except FileNotFoundError:
-        return pd.DataFrame() # 빈 DataFrame 반환
+        # 1. 파일을 읽을 때 인코딩과 헤더 처리에 유연성을 부여
+        df = pd.read_csv(file_path, encoding='utf-8', skipinitialspace=True)
+        
+        # 2. 모든 컬럼 이름을 소문자로 변환하고 앞뒤 공백을 제거하여 표준화
+        df.columns = df.columns.str.lower().str.strip()
+        
+        # 3. 'transaction_dt' 컬럼이 존재하는지 최종 확인 후, DateTime 형식으로 강제 변환
+        if 'transaction_dt' not in df.columns:
+            # 이 시점까지 컬럼 이름을 찾지 못했다면 파일 구조 자체가 잘못된 것임
+            raise ValueError("CSV 파일에 'transaction_dt' 컬럼이 존재하지 않습니다. 헤더를 확인하십시오.")
 
-# 규칙에 사용될 상수 정의
+        df['transaction_dt'] = pd.to_datetime(df['transaction_dt'])
+        
+        return df
+    
+    except FileNotFoundError:
+        st.error(f"🚨 파일을 찾을 수 없습니다: '{file_path}'. 경로를 확인하십시오.")
+        return pd.DataFrame()
+    except Exception as e:
+        # 기타 모든 파싱 및 로딩 오류를 Streamlit에 표시
+        st.error(f"데이터 로딩 중 치명적인 오류 발생: {e}")
+        return pd.DataFrame()
+
+
+# 규칙에 사용될 상수 정의 (이 부분은 이전과 동일합니다.)
 PROHIBITED_MCCS = ['5813', '7995', '5814']  # 유흥주점, 카지노, 주점 등
-# pd.to_datetime 대신 datetime.date 객체 사용을 권장
 HOLIDAY_LIST = [pd.to_datetime('2025-12-25').date(), pd.to_datetime('2026-01-01').date()]
 
-# --- 2. 탐지 함수 정의 ---
+# --- 2. 탐지 함수 정의 (이 부분은 이전과 동일하며, 안정성이 높습니다.) ---
 
 def check_restricted_mcc(df):
     """제한 업종 MCC 코드 탐지 (Critical)"""
@@ -46,7 +63,7 @@ def check_irregular_time(df):
     for _, tx in df.iterrows():
         tx_time = tx['transaction_dt'].time()
         tx_date = tx['transaction_dt'].date()
-        day_of_week = tx['transaction_dt'].weekday()  # 5=Sat, 6=Sun
+        day_of_week = tx['transaction_dt'].weekday()  
         
         # 1. 심야 시간 (23:00 ~ 05:59)
         if tx_time >= time(23, 0) or tx_time < time(6, 0):
@@ -74,14 +91,10 @@ def check_sequential_transactions(df):
     """연속/중복 결제 패턴 탐지 (Medium/High)"""
     alerts = []
     
-    # NaN 값 때문에 Series 비교 시 오류 방지를 위해, shift(1)은 이전 행의 값을 가져오고
-    # NaN 비교는 False로 처리됨.
     df_sorted = df.sort_values(by=['card_holder_id', 'transaction_dt']).copy()
     
-    # 시간 차이 (분)
     df_sorted['time_diff'] = df_sorted.groupby('card_holder_id')['transaction_dt'].diff().dt.total_seconds() / 60
     
-    # 이전 거래 정보
     df_sorted['prev_merchant'] = df_sorted.groupby('card_holder_id')['merchant_name'].shift(1)
     df_sorted['prev_mcc'] = df_sorted.groupby('card_holder_id')['mcc_code'].shift(1)
 
@@ -90,7 +103,6 @@ def check_sequential_transactions(df):
                       (df_sorted['merchant_name'] == df_sorted['prev_merchant'])
 
     for _, tx in df_sorted[sequential_mask].iterrows():
-        # 첫 거래는 제외하고 두 번째 거래에 대해 경고를 발생시킴
         alerts.append({
             'transaction_id': tx['transaction_id'],
             'rule_name': '동일 가맹점 연속 결제',
@@ -148,12 +160,12 @@ if __name__ == '__main__':
     st.set_page_config(layout="wide")
     st.title("🛡️ CardGuard AI: 법인카드 이상 활동 경고 (SAA) 시스템")
 
-    # 1. 데이터 로드
-    # 파일 경로가 맞는지 확인 (예: data/transactions.csv)
+    # 1. 데이터 로드 (수정된 load_data 함수 사용)
     transactions_df = load_data('data/transactions.csv') 
 
     if transactions_df.empty:
-        st.error("🚨 **Error:** 거래 데이터를 로드할 수 없습니다. 'data/transactions.csv' 파일 경로와 내용을 확인해 주세요.")
+        # load_data 함수 내에서 이미 에러 메시지를 출력했거나 파일이 없는 경우
+        st.info("👈 데이터 로드에 실패했거나, 'data/transactions.csv' 파일이 비어 있습니다.")
     else:
         # 2. 탐지 실행
         alerts_result = run_all_detection(transactions_df)
@@ -166,7 +178,7 @@ if __name__ == '__main__':
         # 3. 경고 출력 및 지표 표시
         if alerts_result:
             alerts_df = pd.DataFrame(alerts_result)
-            alerts_df = alerts_df.drop_duplicates() # 중복 경고 제거
+            alerts_df = alerts_df.drop_duplicates() 
             
             # 지표 표시
             col1, col2, col3, col4 = st.columns(4)
@@ -183,6 +195,4 @@ if __name__ == '__main__':
             st.dataframe(styled_df, use_container_width=True)
 
         else:
-
             st.success("🎉 탐지된 의심 활동(SAA)이 없습니다. 모든 거래는 정상입니다.")
-
