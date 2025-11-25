@@ -252,8 +252,8 @@ if __name__ == '__main__':
                     latitude=map_data["lat"].mean(),
                     longitude=map_data["lon"].mean(),
                     zoom=11, 
-                    pitch=60,   # 버드뷰를 위해 60으로 설정
-                    bearing=-15 # 살짝 회전
+                    pitch=60,   # 버드뷰 (Bird's Eye View)
+                    bearing=-15 
                 )
 
                 # 2. 산점도 레이어 설정: get_color를 'color' 컬럼으로 지정
@@ -274,8 +274,12 @@ if __name__ == '__main__':
                     tooltip={
                         "html": "{popup_text}", 
                         "style": {
-                            "backgroundColor": "red",
-                            "color": "white"
+                            "backgroundColor": "rgba(30, 30, 30, 0.9)", # 어두운 반투명 배경
+                            "color": "#F0F0F0",                        # 밝은 회색 텍스트
+                            "padding": "15px",                         # 충분한 여백
+                            "border-radius": "8px",                    # 둥근 모서리
+                            "boxShadow": "0 4px 15px rgba(0, 0, 0, 0.3)", # 부드러운 그림자
+                            "font-family": "sans-serif"
                         }
                     }
                 )
@@ -295,7 +299,6 @@ if __name__ == '__main__':
             
             display_cols = ['alert_dt', 'severity', 'rule_name', 'card_holder_id', 'merchant_name', 'amount', 'detail']
             
-            # 테이블 스타일링은 기존대로 유지
             styled_df = map_data[display_cols].style.applymap(color_severity, subset=['severity']).format({'amount': '{:,.0f}원'})
 
             st.dataframe(styled_df, use_container_width=True)
