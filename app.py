@@ -4,26 +4,27 @@ import streamlit as st
 import numpy as np 
 import pydeck as pdk 
 
-# --- 1. 데이터 로딩 및 규칙 정의 (Lat/Lon 타입 변환 로직 추가) ---
+# --- 1. 데이터 로딩 및 규칙 정의 (최신 수정사항 반영) ---
 
 # Mapbox API 키 설정
-# Streamlit Cloud 또는 로컬의 .streamlit/secrets.toml 파일에서 키를 가져옴
+# st.secrets에서 mapbox_token을 안전하게 불러옵니다.
 try:
     MAPBOX_API_KEY = st.secrets["mapbox_token"]
-except:
+except Exception:
     MAPBOX_API_KEY = None 
-    st.warning("Mapbox 토큰이 설정되지 않았습니다. 지도가 표시되지 않을 수 있습니다. '.streamlit/secrets.toml' 파일을 확인하세요.")
+    # 토큰이 없거나 잘못 설정된 경우 경고를 표시합니다.
+    st.warning("🚨 Mapbox 토큰 설정 오류: 지도가 표시되지 않거나 Mapbox 워터마크가 나타날 수 있습니다. Secrets 설정을 확인하세요.")
 
 
 def load_data(file_path='data/transactions.csv'):
     """
-    [최종 수정] CSV 파일 로드 시, 헤더 표준화, DateTime 파싱, 그리고 Lat/Lon을 float으로 강제 변환합니다.
+    CSV 파일 로드 시, 헤더 표준화, DateTime 파싱, 그리고 Lat/Lon을 float으로 강제 변환합니다.
     """
     try:
-        # delimiter=','를 명시
+        # 구분자(delimiter=',') 명시 및 인코딩 처리
         df = pd.read_csv(file_path, encoding='utf-8', skipinitialspace=True, delimiter=',') 
         
-        # 모든 컬럼 이름을 소문자로 변환하고 앞뒤 공백을 제거하여 표준화
+        # 모든 컬럼 이름 표준화 (소문자, 공백 제거)
         df.columns = df.columns.str.lower().str.strip()
         
         # 'transaction_dt' 컬럼 검증 및 파싱
@@ -33,7 +34,7 @@ def load_data(file_path='data/transactions.csv'):
 
         df['transaction_dt'] = pd.to_datetime(df['transaction_dt'])
         
-        # 🚨 위치 정보 컬럼을 float으로 강제 변환 (지도 오류 해결 핵심)
+        # 위치 정보 컬럼을 float으로 강제 변환 (지도 오류 해결 핵심)
         if 'location_lat' in df.columns and 'location_lon' in df.columns:
             df['location_lat'] = pd.to_numeric(df['location_lat'], errors='coerce')
             df['location_lon'] = pd.to_numeric(df['location_lon'], errors='coerce')
@@ -153,7 +154,7 @@ def run_all_detection(df):
     
     return all_alerts
 
-# --- 3. Streamlit 애플리케이션 메인 로직 (지도 및 툴팁 추가) ---
+# --- 3. Streamlit 애플리케이션 메인 로직 (지도 및 툴팁 포함) ---
 
 def color_severity(val):
     """심각도에 따라 셀 배경색을 지정하는 함수"""
@@ -192,7 +193,7 @@ if __name__ == '__main__':
             alerts_df = pd.DataFrame(alerts_result)
             alerts_df = alerts_df.drop_duplicates(subset=['transaction_id', 'rule_name']) 
             
-            # --- 지도 생성을 위해 원본 거래 데이터(위치, 사용자, 금액)와 경고 데이터를 병합 ---
+            # --- 지도 생성을 위해 원본 거래 데이터와 경고 데이터를 병합 ---
             map_data = alerts_df.merge(
                 transactions_df[['transaction_id', 'card_holder_id', 'amount', 'merchant_name', 'location_lat', 'location_lon']],
                 on='transaction_id',
@@ -205,7 +206,7 @@ if __name__ == '__main__':
                 'location_lon': 'lon'
             })
             
-            # 위치 정보가 없는 경고는 지도에서 제외 (float으로 변환했기 때문에 NaN 값 확인 가능)
+            # 위치 정보가 없는 경고는 지도에서 제외
             map_data = map_data.dropna(subset=['lat', 'lon'])
             
             # --- 툴팁에 사용될 상세 정보 컬럼 생성 ---
@@ -232,4 +233,49 @@ if __name__ == '__main__':
 
             if not map_data.empty:
                 # 1. 뷰포트 설정 (경고 발생 지점의 평균 위치를 중심으로 설정)
-                view_state = pdk.ViewState
+                view_state = pdk.ViewState(
+                    latitude=map_data["lat"].mean(),
+                    longitude=map_data["lon"].mean(),
+                    zoom=11, 
+                    pitch=50
+                )
+
+                # 2. 산점도 레이어 설정
+                layer = pdk.Layer(
+                    "ScatterplotLayer",
+                    map_data,
+                    get_position=["lon", "lat"], 
+                    get_color=[255, 0, 0, 200], 
+                    get_radius=500, 
+                    pickable=True, 
+                )
+
+                # 3. PyDeck 맵 렌더링 (Mapbox API 키 적용)
+                st.pydeck_chart(pdk.Deck(
+                    map_style="mapbox://styles/mapbox/light-v9",
+                    initial_view_state=view_state,
+                    layers=[layer],
+                    mapbox_key=MAPBOX_API_KEY, # Mapbox API 키 적용
+                    tooltip={
+                        "html": "{popup_text}", 
+                        "style": {
+                            "backgroundColor": "red",
+                            "color": "white"
+                        }
+                    }
+                ))
+                
+            else:
+                st.info("지도에 표시할 위치 정보(lat, lon)가 있는 경고는 없습니다.")
+
+            # --- 상세 내역 테이블 표시 ---
+            st.subheader("⚠️ 경고 상세 내역 (사용자/사용처/금액 포함)")
+            
+            display_cols = ['alert_dt', 'severity', 'rule_name', 'card_holder_id', 'merchant_name', 'amount', 'detail']
+            
+            styled_df = map_data[display_cols].style.applymap(color_severity, subset=['severity']).format({'amount': '{:,.0f}원'})
+
+            st.dataframe(styled_df, use_container_width=True)
+
+        else:
+            st.success("🎉 탐지된 의심 활동(SAA)이 없습니다. 모든 거래는 정상입니다.")
