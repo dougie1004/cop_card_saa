@@ -3,7 +3,7 @@ from datetime import time
 import streamlit as st
 import numpy as np 
 
-# --- 1. 데이터 로딩 및 규칙 정의 (최종 수정된 load_data 함수 포함) ---
+# --- 1. 데이터 로딩 및 규칙 정의 (load_data 함수는 변경 없음) ---
 
 def load_data(file_path='data/transactions.csv'):
     """
@@ -11,14 +11,13 @@ def load_data(file_path='data/transactions.csv'):
     구분자(delimiter) 문제를 해결하기 위해 쉼표(,)를 명시합니다.
     """
     try:
-        # 1. 파일을 읽을 때 인코딩('utf-8'), 공백 제거, 그리고 구분자(delimiter=',')를 명시
-        # 💡 만약 이 코드로 실패하면, 아래 줄의 'delimiter=','를 'delimiter=';'' 또는 'delimiter='\t''로 변경해 보세요.
-        df = pd.read_csv(file_path, encoding='utf-8', skipinitialspace=True, delimiter=',')
+        # delimiter=','를 명시하여 CSV 파일을 로드합니다.
+        df = pd.read_csv(file_path, encoding='utf-8', skipinitialspace=True, delimiter=',') 
         
-        # 2. 모든 컬럼 이름을 소문자로 변환하고 앞뒤 공백을 제거하여 표준화
+        # 모든 컬럼 이름을 소문자로 변환하고 앞뒤 공백을 제거하여 표준화
         df.columns = df.columns.str.lower().str.strip()
         
-        # 3. 'transaction_dt' 컬럼이 존재하는지 최종 확인 후, DateTime 형식으로 강제 변환
+        # 'transaction_dt' 컬럼이 존재하는지 최종 확인 후, DateTime 형식으로 강제 변환
         if 'transaction_dt' not in df.columns:
             # 🚨 디버깅 정보 출력: 현재 로드된 컬럼 목록을 사용자에게 보여줌
             st.error(f"디버깅 정보: 로드된 컬럼: {list(df.columns)}") 
@@ -37,7 +36,7 @@ def load_data(file_path='data/transactions.csv'):
         return pd.DataFrame()
 
 
-# 규칙에 사용될 상수 정의 (이후 코드는 변경 없음)
+# 규칙에 사용될 상수 정의
 PROHIBITED_MCCS = ['5813', '7995', '5814']  # 유흥주점, 카지노, 주점 등
 HOLIDAY_LIST = [pd.to_datetime('2025-12-25').date(), pd.to_datetime('2026-01-01').date()]
 
@@ -142,7 +141,7 @@ def run_all_detection(df):
     
     return all_alerts
 
-# --- 3. Streamlit 애플리케이션 메인 로직 (변경 없음) ---
+# --- 3. Streamlit 애플리케이션 메인 로직 (지도 추가) ---
 
 def color_severity(val):
     """심각도에 따라 셀 배경색을 지정하는 함수"""
@@ -162,7 +161,7 @@ if __name__ == '__main__':
     st.set_page_config(layout="wide")
     st.title("🛡️ CardGuard AI: 법인카드 이상 활동 경고 (SAA) 시스템")
 
-    # 1. 데이터 로드 (수정된 load_data 함수 사용)
+    # 1. 데이터 로드 
     transactions_df = load_data('data/transactions.csv') 
 
     if transactions_df.empty:
@@ -176,22 +175,51 @@ if __name__ == '__main__':
         
         st.header("🔔 2. 탐지 경고 결과 (SAA)")
 
-        # 3. 경고 출력 및 지표 표시
+        # 3. 경고 출력, 지도 표시 및 지표 표시 (지도 추가 로직)
         if alerts_result:
             alerts_df = pd.DataFrame(alerts_result)
-            alerts_df = alerts_df.drop_duplicates() 
+            # 중복 경고 제거
+            alerts_df = alerts_df.drop_duplicates(subset=['transaction_id', 'rule_name']) 
             
-            # 지표 표시
+            # --- 지도 생성을 위해 원본 거래 데이터(위치, 사용자, 금액)와 경고 데이터를 병합 ---
+            map_data = alerts_df.merge(
+                transactions_df[['transaction_id', 'card_holder_id', 'amount', 'merchant_name', 'location_lat', 'location_lon']],
+                on='transaction_id',
+                how='left'
+            )
+            
+            # st.map을 위해 컬럼 이름을 'lat'과 'lon'으로 변경
+            map_data = map_data.rename(columns={
+                'location_lat': 'lat', 
+                'location_lon': 'lon'
+            })
+            
+            # 위치 정보가 없는 경고는 지도에서 제외
+            map_data = map_data.dropna(subset=['lat', 'lon'])
+            
+            # --- 지표 표시 ---
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("총 거래 건수", len(transactions_df))
             col2.metric("총 경고 건수", len(alerts_df))
             col3.metric("Critical 경고", len(alerts_df[alerts_df['severity'] == 'Critical']))
             col4.metric("High 경고", len(alerts_df[alerts_df['severity'] == 'High']))
             
-            st.subheader("⚠️ 경고 상세 내역")
+            # --- 지도 표시 ---
+            st.header("🗺️ 3. 위반된 사용처 지도")
+            if not map_data.empty:
+                # lat과 lon 컬럼만 추출하여 지도에 표시
+                st.map(map_data[['lat', 'lon']])
+            else:
+                st.info("지도에 표시할 위치 정보(lat, lon)가 있는 경고는 없습니다.")
+
+            # --- 상세 내역 테이블 표시 (병합된 데이터를 사용) ---
+            st.subheader("⚠️ 경고 상세 내역 (사용자/사용처/금액 포함)")
+            
+            # 표시할 컬럼 목록 재정의
+            display_cols = ['alert_dt', 'severity', 'rule_name', 'card_holder_id', 'merchant_name', 'amount', 'detail']
             
             # DataFrame 스타일링 적용
-            styled_df = alerts_df[['alert_dt', 'severity', 'rule_name', 'transaction_id', 'detail']].style.applymap(color_severity, subset=['severity'])
+            styled_df = map_data[display_cols].style.applymap(color_severity, subset=['severity'])
 
             st.dataframe(styled_df, use_container_width=True)
 
