@@ -157,7 +157,7 @@ def run_all_detection(df):
 # --- 3. Streamlit 애플리케이션 메인 로직 (지도 및 툴팁 포함) ---
 
 def color_severity(val):
-    """심각도에 따라 셀 배경색을 지정하는 함수"""
+    """심각도에 따라 셀 배경색을 지정하는 함수 (테이블 스타일링용)"""
     if val == 'Critical':
         color = '#ffcccc'
     elif val == 'High':
@@ -167,6 +167,18 @@ def color_severity(val):
     else:
         color = ''
     return f'background-color: {color}'
+
+
+def get_color_by_severity(row):
+    """심각도에 따라 Pydeck 포인트 색상 (RGBA 리스트)을 반환합니다."""
+    if row['severity'] == 'Critical':
+        return [255, 0, 0, 200]    # Critical: Red (빨강)
+    elif row['severity'] == 'High':
+        return [255, 165, 0, 200]  # High: Orange (주황)
+    elif row['severity'] == 'Medium':
+        return [255, 255, 0, 200]  # Medium: Yellow (노랑)
+    return [100, 100, 100, 150] # Default
+
 
 # ==============================================================================
 
@@ -209,6 +221,9 @@ if __name__ == '__main__':
             # 위치 정보가 없는 경고는 지도에서 제외
             map_data = map_data.dropna(subset=['lat', 'lon'])
             
+            # --- 색상 컬럼 추가: 심각도에 따라 색상 매핑 ---
+            map_data['color'] = map_data.apply(get_color_by_severity, axis=1)
+
             # --- 툴팁에 사용될 상세 정보 컬럼 생성 ---
             map_data['popup_text'] = (
                 "**사용자:** " + map_data['card_holder_id'].astype(str) + 
@@ -228,30 +243,30 @@ if __name__ == '__main__':
             # --- 지도 표시 (pydeck을 사용) ---
             st.header("🗺️ 3. 위반된 사용처 지도 (경고 정보 표시)")
             
-            st.info(f"**총 경고 건수({len(alerts_df)}건)**와 지도에 표시된 핀의 개수가 다를 수 있습니다. 이는 여러 개의 경고가 **동일한 위치**에서 발생했기 때문입니다. 핀 위에 커서를 올려 상세 정보를 확인하세요.")
+            st.info(f"**총 경고 건수({len(alerts_df)}건)**와 지도에 표시된 핀의 개수가 다를 수 있습니다. 이는 여러 개의 경고가 **동일한 위치**에서 발생했기 때문입니다. 핀 위에 커서를 올려 상세 정보를 확인하세요. (빨강: Critical, 주황: High, 노랑: Medium)")
 
 
             if not map_data.empty:
-                # 1. 뷰포트 설정
+                # 1. 뷰포트 설정: 버드뷰를 위해 pitch와 bearing 변경
                 view_state = pdk.ViewState(
                     latitude=map_data["lat"].mean(),
                     longitude=map_data["lon"].mean(),
                     zoom=11, 
-                    pitch=50
+                    pitch=60,   # 버드뷰를 위해 60으로 설정
+                    bearing=-15 # 살짝 회전
                 )
 
-                # 2. 산점도 레이어 설정
+                # 2. 산점도 레이어 설정: get_color를 'color' 컬럼으로 지정
                 layer = pdk.Layer(
                     "ScatterplotLayer",
                     map_data,
                     get_position=["lon", "lat"], 
-                    get_color=[255, 0, 0, 200], 
+                    get_color='color', # 심각도에 따라 동적으로 색상 지정
                     get_radius=500, 
                     pickable=True, 
                 )
                 
                 # 3. pdk.Deck 생성 시 필요한 인수를 직접 전달
-                #    TypeError를 방지하기 위해, Mapbox 키를 전달할지 말지 결정합니다.
                 deck = pdk.Deck(
                     map_style="mapbox://styles/mapbox/light-v9",
                     initial_view_state=view_state,
@@ -265,8 +280,7 @@ if __name__ == '__main__':
                     }
                 )
 
-                # 🚨 Mapbox API 키가 None이 아닐 경우에만 key 속성에 할당합니다.
-                # 이 방식이 딕셔너리 언패킹보다 안정적입니다.
+                # 🚨 Mapbox API 키가 None이 아닐 경우에만 key 속성에 할당 (안정화 로직)
                 if MAPBOX_API_KEY is not None:
                     deck.mapbox_key = MAPBOX_API_KEY
                 
@@ -281,6 +295,7 @@ if __name__ == '__main__':
             
             display_cols = ['alert_dt', 'severity', 'rule_name', 'card_holder_id', 'merchant_name', 'amount', 'detail']
             
+            # 테이블 스타일링은 기존대로 유지
             styled_df = map_data[display_cols].style.applymap(color_severity, subset=['severity']).format({'amount': '{:,.0f}원'})
 
             st.dataframe(styled_df, use_container_width=True)
