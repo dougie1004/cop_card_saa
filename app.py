@@ -4,7 +4,7 @@ import streamlit as st
 import numpy as np 
 import pydeck as pdk 
 
-# --- 1. 데이터 로딩 및 규칙 정의 (최신 수정사항 반영) ---
+# --- 1. 데이터 로딩 및 규칙 정의 (Lat/Lon 타입 변환 로직 포함) ---
 
 # Mapbox API 키 설정
 # st.secrets에서 mapbox_token을 안전하게 불러옵니다.
@@ -12,13 +12,13 @@ try:
     MAPBOX_API_KEY = st.secrets["mapbox_token"]
 except Exception:
     MAPBOX_API_KEY = None 
-    # 토큰이 없거나 잘못 설정된 경우 경고를 표시합니다.
-    st.warning("🚨 Mapbox 토큰 설정 오류: 지도가 표시되지 않거나 Mapbox 워터마크가 나타날 수 있습니다. Secrets 설정을 확인하세요.")
+    # 토큰이 없을 경우 경고를 표시합니다.
+    st.warning("🚨 Mapbox 토큰 설정 오류: 지도가 표시되지 않거나 Mapbox 워터마크가 나타날 수 있습니다. '.streamlit/secrets.toml' 설정을 확인하세요.")
 
 
 def load_data(file_path='data/transactions.csv'):
     """
-    CSV 파일 로드 시, 헤더 표준화, DateTime 파싱, 그리고 Lat/Lon을 float으로 강제 변환합니다.
+    CSV 파일을 로드 시, 헤더 표준화, DateTime 파싱, 그리고 Lat/Lon을 float으로 강제 변환합니다.
     """
     try:
         # 구분자(delimiter=',') 명시 및 인코딩 처리
@@ -239,31 +239,36 @@ if __name__ == '__main__':
                     zoom=11, 
                     pitch=50
                 )
-
-                # 2. 산점도 레이어 설정
-                layer = pdk.Layer(
-                    "ScatterplotLayer",
-                    map_data,
-                    get_position=["lon", "lat"], 
-                    get_color=[255, 0, 0, 200], 
-                    get_radius=500, 
-                    pickable=True, 
-                )
-
-                # 3. PyDeck 맵 렌더링 (Mapbox API 키 적용)
-                st.pydeck_chart(pdk.Deck(
-                    map_style="mapbox://styles/mapbox/light-v9",
-                    initial_view_state=view_state,
-                    layers=[layer],
-                    mapbox_key=MAPBOX_API_KEY, # Mapbox API 키 적용
-                    tooltip={
+                
+                # 2. Pydeck Deck kwargs 딕셔너리 생성
+                deck_kwargs = {
+                    "map_style": "mapbox://styles/mapbox/light-v9",
+                    "initial_view_state": view_state,
+                    "layers": [
+                        pdk.Layer(
+                            "ScatterplotLayer",
+                            map_data,
+                            get_position=["lon", "lat"], 
+                            get_color=[255, 0, 0, 200], 
+                            get_radius=500, 
+                            pickable=True, 
+                        )
+                    ],
+                    "tooltip": {
                         "html": "{popup_text}", 
                         "style": {
                             "backgroundColor": "red",
                             "color": "white"
                         }
                     }
-                ))
+                }
+
+                # 3. Mapbox API 키가 설정되어 있을 경우에만 딕셔너리에 추가
+                if MAPBOX_API_KEY is not None:
+                    deck_kwargs['mapbox_key'] = MAPBOX_API_KEY
+
+                # 4. PyDeck 맵 렌더링 (딕셔너리 언패킹 사용)
+                st.pydeck_chart(pdk.Deck(**deck_kwargs))
                 
             else:
                 st.info("지도에 표시할 위치 정보(lat, lon)가 있는 경고는 없습니다.")
