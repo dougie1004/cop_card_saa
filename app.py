@@ -247,13 +247,13 @@ if __name__ == '__main__':
 
 
             if not map_data.empty:
-                # 1. 뷰포트 설정: 버드뷰를 위해 pitch와 bearing 변경
+                # 1. 뷰포트 설정: 수직 뷰(Top-down View)로 변경 (pitch=0, bearing=0)
                 view_state = pdk.ViewState(
                     latitude=map_data["lat"].mean(),
                     longitude=map_data["lon"].mean(),
                     zoom=11, 
-                    pitch=60,   # 버드뷰 (Bird's Eye View)
-                    bearing=-15 
+                    pitch=0,   # 수직 뷰
+                    bearing=0  # 회전 없음
                 )
 
                 # 2. 산점도 레이어 설정: get_color를 'color' 컬럼으로 지정
@@ -305,3 +305,4 @@ if __name__ == '__main__':
 
         else:
             st.success("🎉 탐지된 의심 활동(SAA)이 없습니다. 모든 거래는 정상입니다.")
+
