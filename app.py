@@ -2,6 +2,8 @@ import pandas as pd
 from datetime import time
 import streamlit as st
 import numpy as np 
+# Pydeck 라이브러리 추가 (지도 툴팁 기능을 위해 필요)
+import pydeck as pdk 
 
 # --- 1. 데이터 로딩 및 규칙 정의 (load_data 함수는 변경 없음) ---
 
@@ -141,7 +143,7 @@ def run_all_detection(df):
     
     return all_alerts
 
-# --- 3. Streamlit 애플리케이션 메인 로직 (지도 추가) ---
+# --- 3. Streamlit 애플리케이션 메인 로직 (지도 및 툴팁 추가) ---
 
 def color_severity(val):
     """심각도에 따라 셀 배경색을 지정하는 함수"""
@@ -175,7 +177,7 @@ if __name__ == '__main__':
         
         st.header("🔔 2. 탐지 경고 결과 (SAA)")
 
-        # 3. 경고 출력, 지도 표시 및 지표 표시 (지도 추가 로직)
+        # 3. 경고 출력, 지도 표시 및 지표 표시
         if alerts_result:
             alerts_df = pd.DataFrame(alerts_result)
             # 중복 경고 제거
@@ -188,7 +190,7 @@ if __name__ == '__main__':
                 how='left'
             )
             
-            # st.map을 위해 컬럼 이름을 'lat'과 'lon'으로 변경
+            # pydeck을 위해 컬럼 이름을 'lat'과 'lon'으로 변경
             map_data = map_data.rename(columns={
                 'location_lat': 'lat', 
                 'location_lon': 'lon'
@@ -197,6 +199,15 @@ if __name__ == '__main__':
             # 위치 정보가 없는 경고는 지도에서 제외
             map_data = map_data.dropna(subset=['lat', 'lon'])
             
+            # --- 툴팁에 사용될 상세 정보 컬럼 생성 ---
+            map_data['popup_text'] = (
+                "**사용자:** " + map_data['card_holder_id'].astype(str) + 
+                "<br>**사용처:** " + map_data['merchant_name'].astype(str) +
+                "<br>**금액:** " + map_data['amount'].apply(lambda x: f"{x:,.0f}원") +
+                "<br>**위반 사유:** " + map_data['rule_name'].astype(str) +
+                "<br>**심각도:** " + map_data['severity'].astype(str)
+            )
+
             # --- 지표 표시 ---
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("총 거래 건수", len(transactions_df))
@@ -204,11 +215,47 @@ if __name__ == '__main__':
             col3.metric("Critical 경고", len(alerts_df[alerts_df['severity'] == 'Critical']))
             col4.metric("High 경고", len(alerts_df[alerts_df['severity'] == 'High']))
             
-            # --- 지도 표시 ---
-            st.header("🗺️ 3. 위반된 사용처 지도")
+            # --- 지도 표시 (pydeck을 사용) ---
+            st.header("🗺️ 3. 위반된 사용처 지도 (경고 정보 표시)")
+            
+            # 📌 경고 건수와 핀 개수 불일치에 대한 설명
+            st.info(f"**총 경고 건수({len(alerts_df)}건)**와 지도에 표시된 핀의 개수가 다를 수 있습니다. 이는 여러 개의 경고가 **동일한 위치**에서 발생했기 때문입니다. 핀 위에 커서를 올려 상세 정보를 확인하세요.")
+
+
             if not map_data.empty:
-                # lat과 lon 컬럼만 추출하여 지도에 표시
-                st.map(map_data[['lat', 'lon']])
+                # 1. 뷰포트 설정 (경고 발생 지점의 평균 위치를 중심으로 설정)
+                view_state = pdk.ViewState(
+                    latitude=map_data["lat"].mean(),
+                    longitude=map_data["lon"].mean(),
+                    zoom=11, 
+                    pitch=50
+                )
+
+                # 2. 산점도 레이어 설정
+                layer = pdk.Layer(
+                    "ScatterplotLayer",
+                    map_data,
+                    get_position=["lon", "lat"], # pydeck은 [경도, 위도] 순서
+                    get_color=[255, 0, 0, 200], # 빨간색 핀 (Critical)
+                    get_radius=500, # 핀 크기 (미터 단위)
+                    pickable=True, # 툴팁 활성화
+                )
+
+                # 3. PyDeck 맵 렌더링 (툴팁 설정 포함)
+                st.pydeck_chart(pdk.Deck(
+                    map_style="mapbox://styles/mapbox/light-v9",
+                    initial_view_state=view_state,
+                    layers=[layer],
+                    tooltip={
+                        # popup_text 컬럼의 내용을 툴팁으로 표시
+                        "html": "{popup_text}", 
+                        "style": {
+                            "backgroundColor": "red",
+                            "color": "white"
+                        }
+                    }
+                ))
+                
             else:
                 st.info("지도에 표시할 위치 정보(lat, lon)가 있는 경고는 없습니다.")
 
@@ -219,7 +266,7 @@ if __name__ == '__main__':
             display_cols = ['alert_dt', 'severity', 'rule_name', 'card_holder_id', 'merchant_name', 'amount', 'detail']
             
             # DataFrame 스타일링 적용
-            styled_df = map_data[display_cols].style.applymap(color_severity, subset=['severity'])
+            styled_df = map_data[display_cols].style.applymap(color_severity, subset=['severity']).format({'amount': '{:,.0f}원'})
 
             st.dataframe(styled_df, use_container_width=True)
 
