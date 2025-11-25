@@ -2,30 +2,41 @@ import pandas as pd
 from datetime import time
 import streamlit as st
 import numpy as np 
-# Pydeck 라이브러리 추가 (지도 툴팁 기능을 위해 필요)
 import pydeck as pdk 
 
-# --- 1. 데이터 로딩 및 규칙 정의 (load_data 함수는 변경 없음) ---
+# --- 1. 데이터 로딩 및 규칙 정의 (Lat/Lon 타입 변환 로직 추가) ---
+
+# Mapbox API 키 설정
+# Streamlit Cloud 또는 로컬의 .streamlit/secrets.toml 파일에서 키를 가져옴
+try:
+    MAPBOX_API_KEY = st.secrets["mapbox_token"]
+except:
+    MAPBOX_API_KEY = None 
+    st.warning("Mapbox 토큰이 설정되지 않았습니다. 지도가 표시되지 않을 수 있습니다. '.streamlit/secrets.toml' 파일을 확인하세요.")
+
 
 def load_data(file_path='data/transactions.csv'):
     """
-    [최종 수정 2] CSV 파일을 로드하고 헤더 표준화 및 디버깅 정보를 추가합니다.
-    구분자(delimiter) 문제를 해결하기 위해 쉼표(,)를 명시합니다.
+    [최종 수정] CSV 파일 로드 시, 헤더 표준화, DateTime 파싱, 그리고 Lat/Lon을 float으로 강제 변환합니다.
     """
     try:
-        # delimiter=','를 명시하여 CSV 파일을 로드합니다.
+        # delimiter=','를 명시
         df = pd.read_csv(file_path, encoding='utf-8', skipinitialspace=True, delimiter=',') 
         
         # 모든 컬럼 이름을 소문자로 변환하고 앞뒤 공백을 제거하여 표준화
         df.columns = df.columns.str.lower().str.strip()
         
-        # 'transaction_dt' 컬럼이 존재하는지 최종 확인 후, DateTime 형식으로 강제 변환
+        # 'transaction_dt' 컬럼 검증 및 파싱
         if 'transaction_dt' not in df.columns:
-            # 🚨 디버깅 정보 출력: 현재 로드된 컬럼 목록을 사용자에게 보여줌
             st.error(f"디버깅 정보: 로드된 컬럼: {list(df.columns)}") 
-            raise ValueError("CSV 파일에 'transaction_dt' 컬럼이 존재하지 않습니다. 헤더를 확인하십시오.")
+            raise ValueError("CSV 파일에 'transaction_dt' 컬럼이 존재하지 않습니다.")
 
         df['transaction_dt'] = pd.to_datetime(df['transaction_dt'])
+        
+        # 🚨 위치 정보 컬럼을 float으로 강제 변환 (지도 오류 해결 핵심)
+        if 'location_lat' in df.columns and 'location_lon' in df.columns:
+            df['location_lat'] = pd.to_numeric(df['location_lat'], errors='coerce')
+            df['location_lon'] = pd.to_numeric(df['location_lon'], errors='coerce')
         
         return df
     
@@ -33,13 +44,12 @@ def load_data(file_path='data/transactions.csv'):
         st.error(f"🚨 파일을 찾을 수 없습니다: '{file_path}'. 경로를 확인하십시오.")
         return pd.DataFrame()
     except Exception as e:
-        # 기타 모든 파싱 및 로딩 오류를 Streamlit에 표시
         st.error(f"데이터 로딩 중 치명적인 오류 발생: {e}")
         return pd.DataFrame()
 
 
 # 규칙에 사용될 상수 정의
-PROHIBITED_MCCS = ['5813', '7995', '5814']  # 유흥주점, 카지노, 주점 등
+PROHIBITED_MCCS = ['5813', '7995', '5814']
 HOLIDAY_LIST = [pd.to_datetime('2025-12-25').date(), pd.to_datetime('2026-01-01').date()]
 
 # --- 2. 탐지 함수 정의 (변경 없음) ---
@@ -148,11 +158,11 @@ def run_all_detection(df):
 def color_severity(val):
     """심각도에 따라 셀 배경색을 지정하는 함수"""
     if val == 'Critical':
-        color = '#ffcccc' # Light Red
+        color = '#ffcccc'
     elif val == 'High':
-        color = '#ffe0b3'  # Light Orange
+        color = '#ffe0b3'
     elif val == 'Medium':
-        color = '#ffffb3'  # Light Yellow
+        color = '#ffffb3'
     else:
         color = ''
     return f'background-color: {color}'
@@ -180,7 +190,6 @@ if __name__ == '__main__':
         # 3. 경고 출력, 지도 표시 및 지표 표시
         if alerts_result:
             alerts_df = pd.DataFrame(alerts_result)
-            # 중복 경고 제거
             alerts_df = alerts_df.drop_duplicates(subset=['transaction_id', 'rule_name']) 
             
             # --- 지도 생성을 위해 원본 거래 데이터(위치, 사용자, 금액)와 경고 데이터를 병합 ---
@@ -196,7 +205,7 @@ if __name__ == '__main__':
                 'location_lon': 'lon'
             })
             
-            # 위치 정보가 없는 경고는 지도에서 제외
+            # 위치 정보가 없는 경고는 지도에서 제외 (float으로 변환했기 때문에 NaN 값 확인 가능)
             map_data = map_data.dropna(subset=['lat', 'lon'])
             
             # --- 툴팁에 사용될 상세 정보 컬럼 생성 ---
@@ -218,57 +227,9 @@ if __name__ == '__main__':
             # --- 지도 표시 (pydeck을 사용) ---
             st.header("🗺️ 3. 위반된 사용처 지도 (경고 정보 표시)")
             
-            # 📌 경고 건수와 핀 개수 불일치에 대한 설명
             st.info(f"**총 경고 건수({len(alerts_df)}건)**와 지도에 표시된 핀의 개수가 다를 수 있습니다. 이는 여러 개의 경고가 **동일한 위치**에서 발생했기 때문입니다. 핀 위에 커서를 올려 상세 정보를 확인하세요.")
 
 
             if not map_data.empty:
                 # 1. 뷰포트 설정 (경고 발생 지점의 평균 위치를 중심으로 설정)
-                view_state = pdk.ViewState(
-                    latitude=map_data["lat"].mean(),
-                    longitude=map_data["lon"].mean(),
-                    zoom=11, 
-                    pitch=50
-                )
-
-                # 2. 산점도 레이어 설정
-                layer = pdk.Layer(
-                    "ScatterplotLayer",
-                    map_data,
-                    get_position=["lon", "lat"], # pydeck은 [경도, 위도] 순서
-                    get_color=[255, 0, 0, 200], # 빨간색 핀 (Critical)
-                    get_radius=500, # 핀 크기 (미터 단위)
-                    pickable=True, # 툴팁 활성화
-                )
-
-                # 3. PyDeck 맵 렌더링 (툴팁 설정 포함)
-                st.pydeck_chart(pdk.Deck(
-                    map_style="mapbox://styles/mapbox/light-v9",
-                    initial_view_state=view_state,
-                    layers=[layer],
-                    tooltip={
-                        # popup_text 컬럼의 내용을 툴팁으로 표시
-                        "html": "{popup_text}", 
-                        "style": {
-                            "backgroundColor": "red",
-                            "color": "white"
-                        }
-                    }
-                ))
-                
-            else:
-                st.info("지도에 표시할 위치 정보(lat, lon)가 있는 경고는 없습니다.")
-
-            # --- 상세 내역 테이블 표시 (병합된 데이터를 사용) ---
-            st.subheader("⚠️ 경고 상세 내역 (사용자/사용처/금액 포함)")
-            
-            # 표시할 컬럼 목록 재정의
-            display_cols = ['alert_dt', 'severity', 'rule_name', 'card_holder_id', 'merchant_name', 'amount', 'detail']
-            
-            # DataFrame 스타일링 적용
-            styled_df = map_data[display_cols].style.applymap(color_severity, subset=['severity']).format({'amount': '{:,.0f}원'})
-
-            st.dataframe(styled_df, use_container_width=True)
-
-        else:
-            st.success("🎉 탐지된 의심 활동(SAA)이 없습니다. 모든 거래는 정상입니다.")
+                view_state = pdk.ViewState
